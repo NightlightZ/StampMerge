@@ -9,7 +9,8 @@
 3. 将Word文件转换为PDF（后台静默，不弹Word窗口）
 4. 可选：删除待处理文件转换后PDF的最后一页（用于去除旧盖章页）
 5. 按 matches.json 精确合并说明文件PDF + 对应盖章页
-6. 处理完毕后自动清理临时文件
+6. 可选：删除拼接完成后PDF的倒数第二页
+7. 处理完毕后自动清理临时文件
 
 使用方式：
   将待处理的Word文件放入「待处理文件」文件夹，将盖章页合集PDF放入「盖章页」文件夹，输出文件将保存在「输出文件夹」中。
@@ -419,6 +420,31 @@ def remove_last_page_from_pdf(pdf_path):
         return False, 0
 
 
+def remove_penultimate_page_from_pdf(pdf_path):
+    """删除 PDF 倒数第二页（页数不足2页则不删除），返回 (是否成功删除, 总页数)。"""
+    try:
+        with open(pdf_path, "rb") as f:
+            reader = PdfReader(f)
+            total = len(reader.pages)
+
+        if total <= 1:
+            return False, total
+
+        target_index = total - 2  # 倒数第二页（0-based）
+        writer = PdfWriter()
+        with open(pdf_path, "rb") as f:
+            reader = PdfReader(f)
+            for i, page in enumerate(reader.pages):
+                if i != target_index:
+                    writer.add_page(page)
+
+        with open(pdf_path, "wb") as f:
+            writer.write(f)
+        return True, total
+    except Exception:
+        return False, 0
+
+
 # ─────────────────────────────────────────────
 #  合并PDF
 # ─────────────────────────────────────────────
@@ -476,6 +502,21 @@ def ask_remove_last_page():
         print("请输入 y 或 n。")
 
 
+def ask_remove_penultimate_after_merge():
+    """询问用户是否删除拼接完成后PDF的倒数第二页。"""
+    prompt = (
+        "\n是否删除拼接完成后每个输出PDF的倒数第二页？\n"
+        "（输入 y 或 n，默认 n）："
+    )
+    while True:
+        choice = input(prompt).strip().lower()
+        if choice in {"", "n", "no", "否"}:
+            return False
+        if choice in {"y", "yes", "是"}:
+            return True
+        print("请输入 y 或 n。")
+
+
 # ─────────────────────────────────────────────
 #  主流程
 # ─────────────────────────────────────────────
@@ -499,10 +540,15 @@ def main():
     print("=" * 60)
 
     remove_last_page = ask_remove_last_page()
+    remove_penultimate_after_merge = ask_remove_penultimate_after_merge()
     if remove_last_page:
         print("  已启用：将删除每个待处理文件转换后PDF的最后一页")
     else:
         print("  未启用：保留待处理文件全部页面")
+    if remove_penultimate_after_merge:
+        print("  已启用：将删除每个输出PDF（拼接后）的倒数第二页")
+    else:
+        print("  未启用：保留拼接完成后的全部页面")
 
     # 确保OCR依赖已安装（首次运行自动安装）
     ensure_deps()
@@ -575,6 +621,14 @@ def main():
             try:
                 merge_pdfs(pdf_path, stamp_path, output_pdf)
                 print(f"    ✓ 合并完成（盖章页第 {page_num} 页）")
+                if remove_penultimate_after_merge:
+                    removed, total_pages = remove_penultimate_page_from_pdf(output_pdf)
+                    if removed:
+                        print(f"    ✓ 已删除倒数第二页（原共 {total_pages} 页）")
+                    elif total_pages <= 1:
+                        print("    [提示] 文件页数不足2页，未删除倒数第二页")
+                    else:
+                        print("    [提示] 删除倒数第二页失败，继续使用当前PDF")
                 success_count += 1
             except Exception as e:
                 print(f"    ✗ 合并失败: {e}")
@@ -582,6 +636,14 @@ def main():
         else:
             shutil.copy(pdf_path, output_pdf)
             print("    ✓ 已输出（无对应盖章页，直接保存）")
+            if remove_penultimate_after_merge:
+                removed, total_pages = remove_penultimate_page_from_pdf(output_pdf)
+                if removed:
+                    print(f"    ✓ 已删除倒数第二页（原共 {total_pages} 页）")
+                elif total_pages <= 1:
+                    print("    [提示] 文件页数不足2页，未删除倒数第二页")
+                else:
+                    print("    [提示] 删除倒数第二页失败，继续使用当前PDF")
             success_count += 1
 
     # 步骤5：清理临时文件
